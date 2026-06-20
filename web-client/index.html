@@ -19,8 +19,8 @@
   <!-- Leaflet (used in the hidden SafeTrack app-screen) -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <!-- Socket.IO — only connects when authenticated in SafeTrack mode -->
-  <script src="/socket.io/socket.io.js"></script>
+  <!-- Supabase JS SDK (includes Realtime — replaces Socket.IO) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <link rel="stylesheet" href="/css/main.css" />
   <link rel="stylesheet" href="/css/calendar.css" />
 
@@ -28,7 +28,10 @@
   <script>
     window.SUPABASE_URL = 'https://cboymxarhsqqkodnhxjk.supabase.co'
     window.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNib3lteGFyaHNxcWtvZG5oeGprIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5MDQ1MTcsImV4cCI6MjA5NzQ4MDUxN30.hnctLOGeNjIu2ZmUrSZVCp3dds1833Vxo8SpB3cprsg';
+    window.API_BASE_URL = 'https://calendar-safetrack.vercel.app/api/v1';
   </script>
+  <!-- SafeTrack Realtime — subscribes to live location, SOS, and ping channels -->
+  <script src="/js/realtime.js" defer></script>
 </head>
 
 <body>
@@ -183,6 +186,74 @@
           id="nip46-countdown">120</span>s</p>
       <div class="cal-modal-actions" style="justify-content:center;">
         <button class="cal-btn-ghost" onclick="cancelNIP46()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════ -->
+  <!--  SEED PHRASE RECOVERY MODAL                         -->
+  <!-- ════════════════════════════════════════════════════ -->
+  <div id="modal-seed-recovery" class="cal-modal-overlay hidden" role="dialog" aria-modal="true"
+    aria-labelledby="seed-recovery-title">
+    <div class="cal-modal">
+      <div class="cal-modal-header">
+        <div class="cal-nip46-icon">🔑</div>
+        <h2 id="seed-recovery-title">Recovery Phrase</h2>
+        <p class="cal-modal-desc">Enter your 12 or 24-word recovery phrase to restore access. Your words never leave this device.</p>
+      </div>
+      <div class="cal-form-group">
+        <label for="seed-lang-select">Phrase Language</label>
+        <select id="seed-lang-select" aria-label="Select mnemonic language">
+          <option value="en">English</option>
+          <option value="am">አማርኛ (Amharic)</option>
+          <option value="ti">ትግርኛ (Tigrinya)</option>
+        </select>
+      </div>
+      <div class="cal-form-group">
+        <label for="seed-phrase-input">Recovery Phrase</label>
+        <textarea id="seed-phrase-input" class="cal-textarea" rows="4"
+          placeholder="Enter your 12 or 24 words separated by spaces…"
+          autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
+          aria-label="Recovery phrase words"></textarea>
+      </div>
+      <div id="seed-recovery-error" class="cal-form-error" aria-live="polite"></div>
+      <div class="cal-modal-actions">
+        <button class="cal-btn-ghost" onclick="closeSeedRecoveryModal()">Cancel</button>
+        <button class="cal-btn-primary" onclick="submitSeedRecovery()" id="btn-seed-recovery">Recover Access</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════ -->
+  <!--  SEED PHRASE SETUP MODAL (post-login onboarding)   -->
+  <!-- ════════════════════════════════════════════════════ -->
+  <div id="modal-seed-setup" class="cal-modal-overlay hidden" role="dialog" aria-modal="true"
+    aria-labelledby="seed-setup-title">
+    <div class="cal-modal">
+      <div class="cal-modal-header">
+        <div class="cal-nip46-icon">📋</div>
+        <h2 id="seed-setup-title">Save Your Recovery Phrase</h2>
+        <p class="cal-modal-desc">Write down these words in order. They are the only way to recover your account if you lose access. These words will not be shown again.</p>
+      </div>
+      <div class="cal-form-group">
+        <label for="seed-setup-lang">Language</label>
+        <select id="seed-setup-lang" onchange="regenerateSeedPhrase()" aria-label="Select recovery phrase language">
+          <option value="en">English</option>
+          <option value="am">አማርኛ (Amharic)</option>
+          <option value="ti">ትግርኛ (Tigrinya)</option>
+        </select>
+      </div>
+      <div id="seed-word-grid" class="seed-word-grid" aria-label="Recovery phrase words" role="list"></div>
+      <div class="cal-form-group" style="margin-top:16px">
+        <label class="seed-confirm-label">
+          <input type="checkbox" id="seed-written-confirm" aria-label="Confirm you have written down the phrase" />
+          I have written down all words in the correct order
+        </label>
+      </div>
+      <div id="seed-setup-error" class="cal-form-error" aria-live="polite"></div>
+      <div class="cal-modal-actions">
+        <button class="cal-btn-ghost" onclick="closeSeedSetupModal()">Skip for now</button>
+        <button class="cal-btn-primary" onclick="confirmSeedSetup()" id="btn-seed-confirm">Save Phrase</button>
       </div>
     </div>
   </div>
@@ -645,6 +716,7 @@
   <!-- ════════════════════════════════════════════════════ -->
   <!--  SCRIPTS                                            -->
   <!-- ════════════════════════════════════════════════════ -->
+  <script src="/js/bip39.js"></script>
   <script src="/js/auth-router.js"></script>
   <script src="/js/calendar.js"></script>
   <script src="/js/api.js"></script>
@@ -728,10 +800,18 @@
             window.AppState && (window.AppState.user = result.user);
           }
           transitionToSafeTrack();
+          // If this was a first-time login (no existing seed phrase), prompt setup
+          if (result.path === 'nostr_register' || result.path === 'pin') {
+            setTimeout(() => showSeedSetupModal(), 800);
+          }
+          break;
+
+        case 'mnemonic_derive_required':
+          // Backend confirmed the shape is a mnemonic — do local BIP39 derivation
+          _performMnemonicAuthFromLastInput(rawInput);
           break;
 
         case 'demo_access':
-          // 6-digit decoy path — boot demo (no real data)
           if (typeof startDemoMode === 'function') startDemoMode();
           break;
 
@@ -748,7 +828,6 @@
 
         case 'calendar_search':
         default:
-          // Not an auth result — treat as calendar search
           const results = CalendarApp.localSearch(rawInput);
           renderCalSearchResults(results, rawInput);
           break;
@@ -866,7 +945,153 @@
       }
     }
 
-    // ── NIP-46 External Signer ────────────────────────────────
+    // ── Seed Phrase Recovery ──────────────────────────────────
+    function showSeedRecoveryModal() {
+      document.getElementById('seed-phrase-input').value = '';
+      document.getElementById('seed-recovery-error').textContent = '';
+      document.getElementById('modal-seed-recovery').classList.remove('hidden');
+      setTimeout(() => document.getElementById('seed-phrase-input').focus(), 50);
+    }
+
+    function closeSeedRecoveryModal() {
+      document.getElementById('modal-seed-recovery').classList.add('hidden');
+      document.getElementById('seed-phrase-input').value = '';
+    }
+
+    // Called directly by modal submit or internally from processAuthResult
+    async function submitSeedRecovery() {
+      const phrase = document.getElementById('seed-phrase-input').value.trim();
+      const lang = document.getElementById('seed-lang-select').value;
+      const errEl = document.getElementById('seed-recovery-error');
+      const btn = document.getElementById('btn-seed-recovery');
+
+      errEl.textContent = '';
+      if (!phrase) { errEl.textContent = 'Please enter your recovery phrase.'; return; }
+
+      const words = phrase.split(/\s+/).filter(Boolean);
+      if (words.length !== 12 && words.length !== 24) {
+        errEl.textContent = 'Recovery phrase must be exactly 12 or 24 words.';
+        return;
+      }
+
+      if (typeof BIP39 !== 'undefined' && !BIP39.validateMnemonic(words, lang)) {
+        errEl.textContent = 'Some words were not recognised for the selected language.';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Recovering…';
+
+      try {
+        const result = await AuthRouter.initiateMnemonicLogin(phrase, lang);
+        closeSeedRecoveryModal();
+        processAuthResult(result, phrase);
+      } catch (e) {
+        errEl.textContent = 'Recovery failed. Please check your phrase and try again.';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Recover Access';
+        // Clear phrase from DOM immediately
+        document.getElementById('seed-phrase-input').value = '';
+      }
+    }
+
+    // Triggered when backend signals mnemonic_derive_required
+    async function _performMnemonicAuthFromLastInput(phrase) {
+      const lang = 'en'; // default; user can use the explicit modal for other languages
+      try {
+        const result = await AuthRouter.initiateMnemonicLogin(phrase, lang);
+        processAuthResult(result, phrase);
+      } catch { /* silent */ }
+    }
+
+    // ── Seed Phrase Setup (post-login) ────────────────────────
+    let _currentSeedWords = [];
+    let _currentSeedLang = 'en';
+
+    async function showSeedSetupModal() {
+      // Don't show if already has a seed phrase stored
+      const token = localStorage.getItem('st_access_token');
+      if (!token) return;
+      document.getElementById('seed-setup-error').textContent = '';
+      document.getElementById('seed-written-confirm').checked = false;
+      document.getElementById('modal-seed-setup').classList.remove('hidden');
+      await generateAndShowSeedPhrase();
+    }
+
+    function closeSeedSetupModal() {
+      document.getElementById('modal-seed-setup').classList.add('hidden');
+      _currentSeedWords = [];
+      document.getElementById('seed-word-grid').innerHTML = '';
+    }
+
+    async function generateAndShowSeedPhrase() {
+      const lang = document.getElementById('seed-setup-lang').value || 'en';
+      _currentSeedLang = lang;
+      if (typeof BIP39 === 'undefined') {
+        document.getElementById('seed-setup-error').textContent = 'BIP39 module not available.';
+        return;
+      }
+      _currentSeedWords = await BIP39.generateMnemonic(12, lang);
+      renderSeedWordGrid(_currentSeedWords);
+    }
+
+    async function regenerateSeedPhrase() {
+      await generateAndShowSeedPhrase();
+    }
+
+    function renderSeedWordGrid(words) {
+      const grid = document.getElementById('seed-word-grid');
+      grid.innerHTML = words.map((w, i) =>
+        `<div class="seed-word-item" role="listitem">
+          <span class="seed-word-index">${i + 1}</span>
+          <span class="seed-word-text">${w}</span>
+        </div>`
+      ).join('');
+    }
+
+    async function confirmSeedSetup() {
+      const confirmed = document.getElementById('seed-written-confirm').checked;
+      const errEl = document.getElementById('seed-setup-error');
+      const btn = document.getElementById('btn-seed-confirm');
+
+      if (!confirmed) {
+        errEl.textContent = 'Please confirm you have written down all words.';
+        return;
+      }
+      if (!_currentSeedWords.length) {
+        errEl.textContent = 'No phrase generated. Please wait.';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      errEl.textContent = '';
+
+      try {
+        const token = localStorage.getItem('st_access_token');
+        const result = await AuthRouter.storeSeedPhrase({
+          words: _currentSeedWords,
+          lang: _currentSeedLang,
+          supabaseToken: token,
+        });
+
+        if (result.ok) {
+          showToast('✅ Recovery phrase saved securely', 'success', 4000);
+          closeSeedSetupModal();
+        } else {
+          errEl.textContent = result.error || 'Failed to save. Please try again.';
+        }
+      } catch (e) {
+        errEl.textContent = 'Network error. Try again.';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save Phrase';
+        _currentSeedWords = [];
+      }
+    }
+
+    // NIP-46 External Signer ─────────────────────────────────
     function showNIP46Modal(nonce) {
       document.getElementById('nip46-countdown').textContent = '120';
       document.getElementById('modal-nip46').classList.remove('hidden');

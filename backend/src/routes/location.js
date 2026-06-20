@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { prisma } = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
+const { broadcast } = require('../config/supabase');
 
 router.use(authMiddleware);
 
@@ -49,8 +50,7 @@ router.post('/update', async (req, res) => {
     }
   });
 
-  // Broadcast live location to all accepted contacts who have sharing enabled
-  const io = req.app.get('io');
+  // Broadcast live location to all accepted contacts via Supabase Realtime
   const links = await prisma.contactLink.findMany({
     where: {
       status: 'ACCEPTED',
@@ -59,15 +59,15 @@ router.post('/update', async (req, res) => {
   });
 
   const contactIds = links.map(l => l.userAId === userId ? l.userBId : l.userAId);
-  contactIds.forEach(contactId => {
-    io.to(`user:${contactId}`).emit('location:update', {
+  await Promise.all(contactIds.map(contactId =>
+    broadcast(`loc:${contactId}`, 'location:update', {
       userId,
       lat, lng, accuracy,
       batteryPct,
       source: locationSource,
       timestamp: now
-    });
-  });
+    })
+  ));
 
   // If this was triggered by a remote ping, mark the ping as responded
   if (source === 'REMOTE_PING_FORCED') {

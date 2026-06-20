@@ -3,6 +3,7 @@ const { prisma } = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
 const { REMOTE_PING_EXPIRY_MS } = require('../config/constants');
+const { broadcast } = require('../config/supabase');
 
 router.use(authMiddleware);
 
@@ -29,9 +30,8 @@ router.post('/request', async (req, res) => {
     data: { issuerId, targetId: targetUserId, status: 'QUEUED' }
   });
 
-  // Push the ping as a high-priority Socket.IO push to the target
-  const io = req.app.get('io');
-  io.to(`user:${targetUserId}`).emit('ping:forced', {
+  // Push ping to target device via Supabase Realtime
+  await broadcast(`user:${targetUserId}`, 'ping:forced', {
     pingId: ping.id,
     fromUserId: issuerId,
     timestamp: ping.queuedAt

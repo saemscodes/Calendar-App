@@ -14,7 +14,7 @@ router.get('/me', async (req, res) => {
   res.json(user);
 });
 
-// GET /api/v1/users/search?q=...  (by username or phone)
+// GET /api/v1/users/search?q=...  (by username, phone, or npub)
 router.get('/search', async (req, res) => {
   const q = (req.query.q || '').trim();
   if (q.length < 2) throw new AppError('Search query must be at least 2 characters', 400);
@@ -26,12 +26,13 @@ router.get('/search', async (req, res) => {
         {
           OR: [
             { username: { contains: q, mode: 'insensitive' } },
-            { phone: { contains: q } }
+            { phone: { contains: q } },
+            { npub: { contains: q, mode: 'insensitive' } },
           ]
         }
       ]
     },
-    select: { id: true, username: true, displayName: true, avatarUrl: true },
+    select: { id: true, username: true, displayName: true, avatarUrl: true, npub: true },
     take: 20
   });
   res.json(users);

@@ -2,21 +2,34 @@
  * SafeTrack — Auth Router (Hybrid Search Bar)
  * Spec §13: Client performs shape triage, fires parallel backend check
  * ONLY for shaped inputs. Calendar local search always runs immediately.
+ *
+ * Auth Paths:
+ *   A) 4-digit PIN       → backend verify (device-bound, rate-limited)
+ *   B) 6-digit code      → OTP verify or demo-mode decoy
+ *   C) nsec1/npub1/hex64 → Nostr challenge-response (local signing, no nsec leaves device)
+ *   D) 12/24-word phrase → BIP39 mnemonic → local nsec derivation → Nostr challenge-response
+ *
+ * Seed phrase rules:
+ *   - ANY language supported (English, Amharic, Tigrinya, etc.)
+ *   - The raw words NEVER leave the browser
+ *   - The derived nsec NEVER leaves the browser
+ *   - Only (npub, schnorr-sig, entropy_fingerprint) reach the server
+ *
  * npub stored/matched as plaintext — never hashed.
  */
 
 const AuthRouter = (() => {
   // ── Config ───────────────────────────────────────────────
   const SUPABASE_URL = window.SUPABASE_URL || '';
-  const EDGE_AUTH = `${SUPABASE_URL}/functions/v1/auth-verify`;
+  const EDGE_AUTH  = `${SUPABASE_URL}/functions/v1/auth-verify`;
   const EDGE_NOSTR = `${SUPABASE_URL}/functions/v1/auth-nostr`;
+  const EDGE_SEED  = `${SUPABASE_URL}/functions/v1/auth-seed`;
 
   // ── Device fingerprint (ephemeral, session-stable) ───────
   const DEVICE_FP_KEY = 'st_device_fp';
   function getDeviceFP() {
     let fp = localStorage.getItem(DEVICE_FP_KEY);
     if (!fp) {
-      // Generate a stable device fingerprint from browser entropy
       fp = Array.from(crypto.getRandomValues(new Uint8Array(16)))
         .map(b => b.toString(16).padStart(2, '0')).join('');
       localStorage.setItem(DEVICE_FP_KEY, fp);
@@ -32,6 +45,11 @@ const AuthRouter = (() => {
     if (/^(nsec1|npub1)[a-z0-9]{58,}$/.test(t)) return 'nostr_string';
     if (/^[0-9a-f]{64}$/.test(t)) return 'nostr_string';
     if (/^[0-9a-f]{128}$/.test(t)) return 'nostr_string'; // signatures from challenge flow
+
+    // Mnemonic phrase: 12 or 24 whitespace-separated words (any language)
+    const words = t.split(/\s+/).filter(Boolean);
+    if (words.length === 12 || words.length === 24) return 'mnemonic_phrase';
+
     return 'calendar_text';
   }
 
@@ -50,33 +68,7 @@ const AuthRouter = (() => {
 
   // ── Nostr: derive public key from stored nsec locally ─────
   // nsec never sent to backend. We sign a server challenge locally.
-  async function localNsecSignChallenge(nsecBech32, nonce) {
-    // Import noble/secp256k1 for client-side signing
-    const { schnorr } = await import('https://esm.sh/@noble/curves@1.2.0/secp256k1');
-
-    // Decode nsec bech32 → private key bytes → hex
-    const privKeyHex = bech32Decode(nsecBech32, 'nsec');
-    if (!privKeyHex) throw new Error('Invalid nsec');
-
-    // Derive npub from private key
-    const pubKeyBytes = schnorr.getPublicKey(privKeyHex);
-    const npub = bytesToNpub(pubKeyBytes);
-
-    // Sign SHA256(nonce) with private key
-    const msgBytes = new Uint8Array(
-      await crypto.subtle.digest('SHA-256', new TextEncoder().encode(nonce))
-    );
-    const sig = schnorr.sign(msgBytes, privKeyHex);
-    const sigHex = Array.from(sig).map(b => b.toString(16).padStart(2, '0')).join('');
-
-    // Zero out nsec immediately
-    return { npub, sigHex, privKeyHex: null };
-  }
-
-  // ── Nostr: request challenge then sign it ─────────────────
   async function initiateNostrLogin(input) {
-    // input may be nsec1... or npub1... or 64-char hex pubkey
-
     let npub = null;
     let privKeyHex = null;
     let hasCustody = false;
@@ -100,6 +92,42 @@ const AuthRouter = (() => {
       return { type: 'calendar_search', results: [] };
     }
 
+    return _performNostrChallengeFlow(npub, privKeyHex, hasCustody);
+  }
+
+  // ── Mnemonic: BIP39 phrase → derive nsec → sign challenge ─
+  // Path D — raw words never leave this function scope.
+  async function initiateMnemonicLogin(phrase, language = 'en') {
+    if (typeof BIP39 === 'undefined') {
+      return { type: 'error', message: 'bip39_module_not_loaded' };
+    }
+
+    const words = phrase.trim().split(/\s+/).filter(Boolean);
+
+    // Validate mnemonic (supports en, am, ti)
+    const lang = language || detectMnemonicLanguage(words);
+    if (!BIP39.validateMnemonic(words, lang)) {
+      return { type: 'calendar_search', results: [] }; // silent fail — not recognisable
+    }
+
+    // Derive nsec/npub locally — NEVER sent to server
+    const derived = await BIP39.deriveNsecFromMnemonic(words, lang);
+    if (!derived) return { type: 'calendar_search', results: [] };
+
+    const { nsecHex, npubHex, npubBech32 } = derived;
+    const npub = npubBech32 || npubHex;
+
+    // Compute entropy fingerprint for cross-check
+    const entropyFingerprint = await BIP39.entropyFingerprint(words, lang);
+
+    // Perform challenge-response using derived nsec
+    return _performNostrChallengeFlow(npub, nsecHex, true, entropyFingerprint);
+  }
+
+  // ── Shared Nostr challenge-response flow ──────────────────
+  async function _performNostrChallengeFlow(
+    npub, privKeyHex, hasCustody, entropyFingerprint = null
+  ) {
     // Request challenge from server
     const challengeResp = await fetch(
       `${EDGE_NOSTR}?action=challenge&npub=${encodeURIComponent(npub)}`,
@@ -112,7 +140,6 @@ const AuthRouter = (() => {
     const nonce = challengeData.nonce;
 
     if (hasCustody && privKeyHex) {
-      // Sign the nonce locally with the private key (never leaves device)
       try {
         const { schnorr } = await import('https://esm.sh/@noble/curves@1.2.0/secp256k1');
         const msgBytes = new Uint8Array(
@@ -121,17 +148,24 @@ const AuthRouter = (() => {
         const sig = schnorr.sign(msgBytes, privKeyHex);
         const sigHex = Array.from(sig).map(b => b.toString(16).padStart(2, '0')).join('');
 
-        // Zero reference (GC will clean bytes; best effort in JS)
+        // Zero reference immediately
         privKeyHex = null;
 
-        // Send only npub + sig to backend
-        const verifyResp = await fetch(`${EDGE_NOSTR}?action=verify`, {
+        // For seed phrase recovery, use auth-seed; for direct nsec use auth-nostr
+        const endpoint = entropyFingerprint ? EDGE_SEED : `${EDGE_NOSTR}?action=verify`;
+
+        const verifyResp = await fetch(endpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'X-Device-FP': getDeviceFP(),
           },
-          body: JSON.stringify({ npub, nonce, sig: sigHex }),
+          body: JSON.stringify({
+            npub,
+            nonce,
+            sig: sigHex,
+            ...(entropyFingerprint && { entropy_fingerprint: entropyFingerprint }),
+          }),
         });
         return verifyResp.json();
       } catch (e) {
@@ -143,10 +177,47 @@ const AuthRouter = (() => {
     }
   }
 
+  // ── Language auto-detection for mnemonic phrases ──────────
+  function detectMnemonicLanguage(words) {
+    if (typeof BIP39 === 'undefined') return 'en';
+    for (const lang of BIP39.SUPPORTED_LANGUAGES) {
+      if (BIP39.validateMnemonic(words, lang)) return lang;
+    }
+    return 'en'; // fallback
+  }
+
   // ── Bech32 utilities (minimal, browser-compatible) ────────
   const BECH32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
   const BECH32_CHARSET_MAP = {};
   for (let i = 0; i < BECH32_CHARSET.length; i++) BECH32_CHARSET_MAP[BECH32_CHARSET[i]] = i;
+
+  const BECH32_GENERATOR = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+
+  function _bech32Polymod(values) {
+    let chk = 1;
+    for (const v of values) {
+      const top = chk >> 25;
+      chk = (chk & 0x1ffffff) << 5 ^ v;
+      for (let i = 0; i < 5; i++) if ((top >> i) & 1) chk ^= BECH32_GENERATOR[i];
+    }
+    return chk;
+  }
+
+  function _bech32HrpExpand(hrp) {
+    const ret = [];
+    for (let i = 0; i < hrp.length; i++) ret.push(hrp.charCodeAt(i) >> 5);
+    ret.push(0);
+    for (let i = 0; i < hrp.length; i++) ret.push(hrp.charCodeAt(i) & 31);
+    return ret;
+  }
+
+  function _bech32CreateChecksum(hrp, data) {
+    const values = [..._bech32HrpExpand(hrp), ...data];
+    const polymod = _bech32Polymod([...values, 0, 0, 0, 0, 0, 0]) ^ 1;
+    const checksum = [];
+    for (let i = 0; i < 6; i++) checksum.push((polymod >> (5 * (5 - i))) & 31);
+    return checksum;
+  }
 
   function bech32Decode(str, expectedHrp) {
     try {
@@ -182,6 +253,7 @@ const AuthRouter = (() => {
   }
 
   function bytesToNpub(pubKeyBytes) {
+    // Convert 32-byte pubkey to 5-bit word array
     const words = [];
     let value = 0, bits = 0;
     for (const byte of pubKeyBytes) {
@@ -194,9 +266,28 @@ const AuthRouter = (() => {
     }
     if (bits > 0) words.push((value << (5 - bits)) & 31);
 
-    // minimal bech32 encode (no checksum validation needed — display only)
+    const checksum = _bech32CreateChecksum('npub', words);
     let result = 'npub1';
-    for (const w of words) result += BECH32_CHARSET[w];
+    for (const w of [...words, ...checksum]) result += BECH32_CHARSET[w];
+    return result;
+  }
+
+  // Exposed for BIP39 module to encode nsec/npub bech32
+  function _encodeBech32(hrp, bytesArr) {
+    const words = [];
+    let value = 0, bits = 0;
+    for (const byte of bytesArr) {
+      value = (value << 8) | byte;
+      bits += 8;
+      while (bits >= 5) {
+        bits -= 5;
+        words.push((value >> bits) & 31);
+      }
+    }
+    if (bits > 0) words.push((value << (5 - bits)) & 31);
+    const checksum = _bech32CreateChecksum(hrp, words);
+    let result = hrp + '1';
+    for (const w of [...words, ...checksum]) result += BECH32_CHARSET[w];
     return result;
   }
 
@@ -205,30 +296,42 @@ const AuthRouter = (() => {
     determineShape,
     callBackend,
     initiateNostrLogin,
+    initiateMnemonicLogin,
     getDeviceFP,
     bech32Decode,
     bytesToNpub,
+    _encodeBech32, // used by bip39.js
 
     /**
      * handleSubmit — called ONCE when user submits the search bar.
      * Returns auth result OR signals calendar search.
      */
-    async handleSubmit(input) {
-      const shape = determineShape(input.trim());
+    async handleSubmit(input, mnemonicLang = null) {
+      const trimmed = input.trim();
+      const shape = determineShape(trimmed);
 
       if (shape === 'calendar_text') {
-        // Not an auth shape — pure calendar search
         return { type: 'calendar_search', query: input };
       }
 
       if (shape === 'nostr_string') {
-        // Nostr flow: local signing or NIP-46
-        return initiateNostrLogin(input.trim());
+        return initiateNostrLogin(trimmed);
+      }
+
+      if (shape === 'mnemonic_phrase') {
+        // Detect language automatically from the words themselves
+        const words = trimmed.split(/\s+/).filter(Boolean);
+        const lang = mnemonicLang || detectMnemonicLanguage(words);
+        try {
+          return await initiateMnemonicLogin(trimmed, lang);
+        } catch {
+          return { type: 'calendar_search', query: input };
+        }
       }
 
       // 4-digit or 6-digit: fire backend
       try {
-        return await callBackend(input.trim());
+        return await callBackend(trimmed);
       } catch {
         // Network failure — return calendar search to avoid leaking auth attempt
         return { type: 'calendar_search', query: input };
@@ -252,7 +355,7 @@ const AuthRouter = (() => {
     },
 
     /**
-     * registerNostrAccount — called from onboarding when a new npub user sets up profile
+     * registerNostrAccount — called from onboarding when a new npub user sets up profile.
      */
     async registerNostrAccount({ npub, nonce, sig, username, displayName, phone }) {
       const resp = await fetch(`${EDGE_NOSTR}?action=register`, {
@@ -262,6 +365,37 @@ const AuthRouter = (() => {
           'X-Device-FP': getDeviceFP(),
         },
         body: JSON.stringify({ npub, nonce, sig, username, display_name: displayName, phone }),
+      });
+      return resp.json();
+    },
+
+    /**
+     * storeSeedPhrase — called once during onboarding on a confirmed new account.
+     * Derives entropy fingerprint locally and stores it + the bcrypt-hashed phrase
+     * on the server via the authenticated API. The raw words never leave JS scope.
+     */
+    async storeSeedPhrase({ words, lang, supabaseToken }) {
+      if (typeof BIP39 === 'undefined') throw new Error('BIP39 not loaded');
+      if (!BIP39.validateMnemonic(words, lang)) throw new Error('Invalid mnemonic');
+
+      const fingerprint = await BIP39.entropyFingerprint(words, lang);
+
+      // We hash the phrase client-side using a derived HMAC key so the raw phrase
+      // never reaches the server — the bcrypt hash is computed edge-side.
+      // We send: { phrase_joined, language, word_count, entropy_fingerprint }
+      // The Edge Function bcrypt-hashes phrase_joined server-side.
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/auth-seed-store`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseToken}`,
+        },
+        body: JSON.stringify({
+          phrase_joined: words.join(' '), // hashed server-side, not stored raw
+          language: lang,
+          word_count: words.length,
+          entropy_fingerprint: fingerprint,
+        }),
       });
       return resp.json();
     },

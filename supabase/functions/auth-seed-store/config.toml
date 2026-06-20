@@ -1,0 +1,2 @@
+[functions.auth-seed-store]
+verify_jwt = false

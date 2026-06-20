@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "backend/src/index.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "web-client/**/*",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "backend/src/index.js"
+    },
+    {
+      "src": "/webhook/(.*)",
+      "dest": "backend/src/index.js"
+    },
+    {
+      "src": "/health",
+      "dest": "backend/src/index.js"
+    },
+    {
+      "src": "/(.*\\.(js|css|svg|png|jpg|json|webp|woff2?|ttf|ico|txt))$",
+      "dest": "web-client/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "web-client/index.html"
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  }
+}

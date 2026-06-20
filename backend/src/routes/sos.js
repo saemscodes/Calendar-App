@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { prisma } = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
+const { broadcast } = require('../config/supabase');
 
 router.use(authMiddleware);
 
@@ -54,17 +55,16 @@ router.post('/trigger', async (req, res) => {
     return ev;
   });
 
-  // Broadcast via Socket.IO (real-time silent alert)
-  const io = req.app.get('io');
-  notifyUserIds.forEach(uid => {
-    io.to(`user:${uid}`).emit('sos:alert', {
+  // Broadcast silent SOS alert via Supabase Realtime to each contact
+  await Promise.all(notifyUserIds.map(uid =>
+    broadcast(`user:${uid}`, 'sos:alert', {
       eventId: event.id,
       triggeredById,
       mode: sosMode,
       lat, lng, accuracy,
       timestamp: event.createdAt
-    });
-  });
+    })
+  ));
 
   // TODO: also send push notifications via APNs/FCM here
   // pushService.sendSosPush(notifyUserIds, event);
@@ -94,10 +94,9 @@ router.put('/:eventId/ack', async (req, res) => {
     }
   });
 
-  // Notify the SOS triggerer of the ack
+  // Notify the SOS triggerer of the ack via Supabase Realtime
   const event = await prisma.sosEvent.findUnique({ where: { id: eventId } });
-  const io = req.app.get('io');
-  io.to(`user:${event.triggeredById}`).emit('sos:ack', {
+  await broadcast(`user:${event.triggeredById}`, 'sos:ack', {
     eventId,
     byUserId: notifiedId,
     status: ackStatus,

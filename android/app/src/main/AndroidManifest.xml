@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.safetrack.android">
+
+    <!-- ─── Permissions ──────────────────────────────────────────────────────── -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.USE_FINGERPRINT" />
+
+    <!-- WorkManager -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+        tools:ignore="ProtectedPermissions" />
+
+    <application
+        android:name=".SafeTrackApp"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_calendar"
+        android:label="@string/app_name_calendar"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Calendar"
+        android:networkSecurityConfig="@xml/network_security_config"
+        tools:targetApi="31">
+
+        <!-- ─── BOOT trigger for WorkManager re-schedule ──────────────────── -->
+        <receiver
+            android:name=".location.BootReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ─── Main decoy entry point: Calendar ─────────────────────────── -->
+        <!-- This alias is ENABLED on clean install / reset. It shows the     -->
+        <!-- "Calendar" icon and label in the launcher.                        -->
+        <activity-alias
+            android:name=".alias.CalendarLauncherAlias"
+            android:targetActivity=".auth.CalendarAuthActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_calendar"
+            android:label="@string/app_name_calendar"
+            android:roundIcon="@mipmap/ic_calendar_round">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- ─── Hidden SafeTrack alias: activated programmatically ──────── -->
+        <!-- To keep the decoy: both aliases co-exist, but this one is        -->
+        <!-- DISABLED by default. SafeTrack can enable it at runtime using    -->
+        <!--   PackageManager.setComponentEnabledSetting(...)                  -->
+        <!-- This lets the user choose whether to show the "SafeTrack" icon.  -->
+        <activity-alias
+            android:name=".alias.SafeTrackLauncherAlias"
+            android:targetActivity=".auth.CalendarAuthActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_safetrack"
+            android:label="@string/app_name_safetrack"
+            android:roundIcon="@mipmap/ic_safetrack_round">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- ─── Auth Entry Activity (shared by both aliases) ─────────────── -->
+        <activity
+            android:name=".auth.CalendarAuthActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize"
+            android:screenOrientation="unspecified" />
+
+        <!-- ─── SafeTrack Home ────────────────────────────────────────────── -->
+        <activity
+            android:name=".SafeTrackHomeActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustPan" />
+
+        <!-- ─── Nostr Onboarding ──────────────────────────────────────────── -->
+        <activity
+            android:name=".auth.NostrOnboardingActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- ─── Recovery Phrase Activity ─────────────────────────────────── -->
+        <activity
+            android:name=".auth.RecoveryPhraseActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- ─── Location Foreground Service ──────────────────────────────── -->
+        <service
+            android:name=".location.LocationForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <!-- ─── WorkManager Location Worker ──────────────────────────────── -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup" />
+        </provider>
+
+    </application>
+
+</manifest>

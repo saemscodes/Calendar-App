@@ -333,7 +333,8 @@ body::before {
   background-clip: text;
 }
 
-.topbar-center {}
+
+
 
 .badge {
   display: flex;
@@ -1284,3 +1285,173 @@ body::before {
   .modal { padding: 22px; }
   .btn-sos { width: 64px; height: 64px; font-size: 13px; }
 }
+
+/* ══════════════════════════════════════════════════════
+   SEED PHRASE MODALS
+   ══════════════════════════════════════════════════════ */
+
+/* Recovery + Setup shared overlay reuse .cal-modal-overlay */
+.cal-textarea {
+  width: 100%;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: 13px 16px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  outline: none;
+  resize: vertical;
+  transition: var(--transition);
+  direction: auto; /* supports RTL languages */
+}
+.cal-textarea:focus {
+  border-color: var(--clr-primary);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.2);
+}
+.cal-textarea::placeholder { color: var(--text-muted); }
+
+/* Language select */
+.cal-form-group select,
+.cal-modal select {
+  width: 100%;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: 11px 14px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+  cursor: pointer;
+  transition: var(--transition);
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+}
+.cal-form-group select:focus,
+.cal-modal select:focus {
+  border-color: var(--clr-primary);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.2);
+}
+.cal-form-group select option,
+.cal-modal select option {
+  background: #1a1a3e;
+  color: var(--text-primary);
+}
+
+.cal-form-error {
+  min-height: 18px;
+  font-size: 13px;
+  color: var(--clr-danger);
+  font-weight: 500;
+  margin-top: 4px;
+}
+
+/* ── Seed Word Grid ──────────────────────────────────── */
+.seed-word-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+
+@media (max-width: 380px) {
+  .seed-word-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.seed-word-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(99,102,241,0.1);
+  border: 1px solid rgba(99,102,241,0.25);
+  border-radius: var(--radius-md);
+  padding: 9px 11px;
+  transition: var(--transition);
+  user-select: none;
+}
+
+.seed-word-index {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--clr-primary);
+  min-width: 16px;
+  text-align: right;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.seed-word-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-all;
+  line-height: 1.3;
+}
+
+/* ── Seed Confirm Label ──────────────────────────────── */
+.seed-confirm-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.seed-confirm-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: 5px;
+  border: 1.5px solid var(--clr-primary);
+  background: rgba(99,102,241,0.1);
+  appearance: none;
+  cursor: pointer;
+  margin-top: 1px;
+  transition: var(--transition);
+  position: relative;
+}
+
+.seed-confirm-label input[type="checkbox"]:checked {
+  background: var(--clr-primary);
+}
+
+.seed-confirm-label input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 10px;
+  border: 2px solid #fff;
+  border-top: none;
+  border-left: none;
+  transform: rotate(45deg);
+}
+
+/* ── Recovery phrase "forgotten password" link in cal search ─ */
+.cal-recovery-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--clr-primary);
+  cursor: pointer;
+  font-weight: 500;
+  border: none;
+  background: none;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  transition: var(--transition);
+  text-align: left;
+}
+.cal-recovery-link:hover { background: rgba(99,102,241,0.1); }
+

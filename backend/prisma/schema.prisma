@@ -6,9 +6,11 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
+
 
 // ─────────────────────────────────────────
 // USERS & AUTH
@@ -16,10 +18,11 @@ datasource db {
 model User {
   id            String   @id @default(uuid())
   username      String   @unique
-  phone         String   @unique
+  phone         String?  @unique
   passwordHash  String
   displayName   String?
   avatarUrl     String?
+  npub          String?  @unique  // Nostr public key bech32 — plaintext, for search
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -36,6 +39,7 @@ model User {
   remotePingsIssued     RemotePing[]      @relation("PingIssuer")
   remotePingsTargeted   RemotePing[]      @relation("PingTarget")
   refreshTokens         RefreshToken[]
+  seedPhraseRecovery    SeedPhraseRecovery?
 
   @@map("users")
 }
@@ -49,6 +53,26 @@ model RefreshToken {
   createdAt DateTime @default(now())
 
   @@map("refresh_tokens")
+}
+
+// ─────────────────────────────────────────
+// SEED PHRASE RECOVERY
+// Stores bcrypt hash of the mnemonic only — raw phrase never persists.
+// Language field: 'en' | 'am' | 'ti' | 'fr' | 'es' | 'zh-cn'
+// entropy_fingerprint: first 8 hex chars of SHA-256(entropy_bytes)
+// ─────────────────────────────────────────
+model SeedPhraseRecovery {
+  id                  String   @id @default(uuid())
+  userId              String   @unique
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phraseHash          String   // bcrypt hash of the canonical lowercase phrase
+  language            String   @default("en")
+  wordCount           Int      @default(12)
+  entropyFingerprint  String?  // first 8 hex chars of SHA-256(entropy) for cross-check
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@map("seed_phrase_recovery")
 }
 
 // ─────────────────────────────────────────

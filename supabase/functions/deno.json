@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "lib": ["deno.window"],
+    "strict": true
+  },
+  "imports": {
+    "https://deno.land/std@0.177.0/http/server.ts": "https://deno.land/std@0.177.0/http/server.ts",
+    "https://esm.sh/@supabase/supabase-js@2": "https://esm.sh/@supabase/supabase-js@2",
+    "https://deno.land/x/djwt@v2.8/mod.ts": "https://deno.land/x/djwt@v2.8/mod.ts",
+    "https://deno.land/x/bcrypt@v0.4.1/mod.ts": "https://deno.land/x/bcrypt@v0.4.1/mod.ts",
+    "https://esm.sh/@noble/curves@1.2.0/secp256k1": "https://esm.sh/@noble/curves@1.2.0/secp256k1"
+  }
+}

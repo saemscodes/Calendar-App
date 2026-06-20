@@ -54,7 +54,7 @@ async function mintJWT(userId: string): Promise<string> {
 }
 
 // ─── PATH DETERMINATOR (client-side parity — see spec §13) ──
-type AuthPath = 'four_digit' | 'six_digit' | 'nostr_string' | 'unknown';
+type AuthPath = 'four_digit' | 'six_digit' | 'nostr_string' | 'mnemonic_phrase' | 'unknown';
 
 function determineShape(input: string): AuthPath {
   const trimmed = input.trim();
@@ -65,6 +65,13 @@ function determineShape(input: string): AuthPath {
   if (/^[0-9a-f]{64}$/.test(trimmed)) return 'nostr_string';
   // Signatures (128-char hex from challenge-signing)
   if (/^[0-9a-f]{128}$/.test(trimmed)) return 'nostr_string';
+  // Mnemonic phrase: 12 or 24 words separated by spaces (any language — any unicode)
+  // Minimum 11 spaces (= 12 words), maximum 23 spaces (= 24 words).
+  const spaces = (trimmed.match(/\s+/g) || []).length;
+  if (spaces >= 11 && spaces <= 23) {
+    const words = trimmed.split(/\s+/);
+    if (words.length === 12 || words.length === 24) return 'mnemonic_phrase';
+  }
   return 'unknown';
 }
 
@@ -159,6 +166,21 @@ async function handleNostrString(input: string, deviceFp: string): Promise<Respo
   return json(data, resp.status);
 }
 
+// ─── PATH D: MNEMONIC PHRASE ─────────────────────────────────
+// The raw phrase is not parsed here (no wordlist on the backend).
+// We return a typed signal to the client telling it to execute the
+// local BIP39 → nsec derivation → Nostr challenge-response flow.
+// The server never receives the mnemonic words themselves.
+function handleMnemonicPhrase(input: string): Response {
+  const wordCount = input.trim().split(/\s+/).length;
+  // Signal client to perform local BIP39 derivation and then use auth-nostr
+  return json({
+    type: 'mnemonic_derive_required',
+    word_count: wordCount,
+    message: 'Derive nsec locally, then authenticate via nostr challenge-response',
+  });
+}
+
 // ─── MAIN HANDLER ────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -190,6 +212,10 @@ serve(async (req) => {
       return handleSixDigit(input, deviceFp);
     case 'nostr_string':
       return handleNostrString(input, deviceFp);
+    case 'mnemonic_phrase':
+      // Mnemonic phrases are processed entirely on the client side.
+      // The server only signals: "this is a mnemonic, please derive locally."
+      return handleMnemonicPhrase(input);
     default:
       // Plain text — not an auth attempt, treat as calendar search pass-through
       return calendarSearchFallback(input);
