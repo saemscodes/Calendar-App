@@ -50,14 +50,68 @@ async function loadContacts() {
     // Load groups
     loadGroups();
 
-    // ─── Realtime Subscriptions ──────────────────────────────────────────
+    // ─── Realtime Subscriptions & GAP 3: Relay Discovery ──────────────────
     if (!AppState.isDemoMode && window.RealtimeManager) {
       accepted.forEach(c => {
         if (c.contact?.id) RealtimeManager.watchContact(c.contact.id);
+        
+        // GAP 3: Fetch and Cache Contact Relay Lists (NIP-65)
+        if (c.contact?.npub) {
+          fetchAndCacheContactRelays(c.contact.npub);
+        }
       });
     }
   } catch (err) {
     // Silent fail
+  }
+}
+
+/**
+ * GAP 3: NIP-65 Relay Discovery
+ * Fetches kind:10002 from the relay pool and caches it locally.
+ */
+async function fetchAndCacheContactRelays(npub) {
+  try {
+    const { nip19 } = await import('https://esm.sh/nostr-tools@1.17.0');
+    const { data: pubkey } = nip19.decode(npub);
+    
+    // We check our primary relay pool for the contact's metadata
+    const relays = [
+      'wss://relay.damus.io',
+      'wss://nos.lol',
+      'wss://relay.nostr.band'
+    ];
+
+    for (const url of relays) {
+      const ws = new WebSocket(url);
+      ws.onopen = () => {
+        ws.send(JSON.stringify(['REQ', `relays-${pubkey}`, { kinds: [10002], authors: [pubkey], limit: 1 }]));
+      };
+      ws.onmessage = (msg) => {
+        try {
+          const [type, sub, event] = JSON.parse(msg.data);
+          if (type === 'EVENT' && event.kind === 10002) {
+            const contactRelays = event.tags
+              .filter(t => t[0] === 'r')
+              .map(t => ({ url: t[1], type: t[2] || 'both' }));
+            
+            // Cache in AppState and Persistence (IDB)
+            if (!AppState.contactRelays) AppState.contactRelays = {};
+            AppState.contactRelays[npub] = contactRelays;
+            
+            if (window.NostrP2P) {
+              NostrP2P.saveContactRelays(npub, contactRelays);
+            }
+            ws.close();
+          }
+        } catch(e) {}
+      };
+      ws.onerror = () => ws.close();
+      // Auto-close after 5s if no response
+      setTimeout(() => ws.readyState === WebSocket.OPEN && ws.close(), 5000);
+    }
+  } catch (e) {
+    console.warn(`NIP-65 fetch failed for ${npub}:`, e);
   }
 }
 

@@ -1,9 +1,25 @@
 /**
  * SafeTrack — SOS Module
- * Preserved original code, added native nostr-tools client-side signing constraint and triage relay logic.
+ * STRICT MODE: Multi-Relay Broadcast & NIP-44 Encryption
  */
 
 let _sosLat = null, _sosMng = null;
+
+// GAP 1: Relay Pools
+const PRIMARY_RELAY_POOL = [
+  'wss://relay.damus.io',
+  'wss://nos.lol',
+  'wss://relay.nostr.band',
+  'wss://nostr.wine',
+  'wss://relay.snort.social'
+];
+
+const FALLBACK_RELAY_POOL = [
+  'wss://relay.primal.net',
+  'wss://purplepag.es',
+  'wss://relay.current.fyi',
+  'wss://nostr.oxtr.dev'
+];
 
 // Extracted globally for native gesture injection (e.g. Volume Down 3x bridged from Capacitor)
 window.triggerNativeSOS = function() {
@@ -41,15 +57,14 @@ function triggerSOS() {
  * Utility: Simulates fetching memory-cached private key during active session
  */
 async function _getMemoryPrivateKey() {
-  // In production, this pulls from a highly secure memory enclave populated during login
   const stUser = localStorage.getItem('st_user');
   if (!stUser) return null;
-  // This is a placeholder for the actual private key held in memory/secure storage
-  return AppState.privKeyHex || null; 
+  // STRICT MODE: SOS-specific keypair check
+  return AppState.sosPrivKeyHex || AppState.privKeyHex || null; 
 }
 
 /**
- * Step 2: User confirms → fire the SOS alert silently.
+ * Step 2: User confirms → fire the SOS alert.
  * ZERO-EXPOSURE: Builds Nostr Event natively and signs it *before* it leaves the client.
  */
 async function fireSOS() {
@@ -59,52 +74,73 @@ async function fireSOS() {
 
   try {
     const settings = AppState.settings || {};
-    const payload = JSON.stringify({
+    const privKeyHex = await _getMemoryPrivateKey();
+    if (!privKeyHex) throw new Error('No secure key found in memory. Please re-login.');
+
+    const { getEventHash, getSignature, getPublicKey, nip44 } = await import('https://esm.sh/nostr-tools@1.17.0');
+    const pubKey = getPublicKey(privKeyHex);
+
+    // GAP 2: NIP-44 Encryption (ENCRYPTED PAYLOAD)
+    const rawPayload = JSON.stringify({
       lat: _sosLat || 0,
       lng: _sosMng || 0,
       mode: settings.sosMode || 'SILENT_ALERT',
       groupId: settings.sosGroupId || null,
-      is_drill: settings.drillModeEnabled || false
+      is_drill: settings.drillModeEnabled || false,
+      timestamp: Date.now()
     });
 
-    const privKeyHex = await _getMemoryPrivateKey();
-    let signedEvent = null;
+    const recipients = (settings.emergencyContacts || []).map(c => c.pubkey);
+    if (settings.groupPubkey) recipients.push(settings.groupPubkey);
 
-    if (privKeyHex) {
-      const { getEventHash, getSignature, getPublicKey } = await import('https://esm.sh/nostr-tools@1.17.0');
-      signedEvent = {
-        kind: 10001, // Custom SOS Payload kind
-        pubkey: getPublicKey(privKeyHex),
-        created_at: Math.floor(Date.now() / 1000),
-        tags: [
-          ['t', 'sos'],
-          ...(settings.drillModeEnabled ? [['drill', 'true']] : [])
-        ],
-        content: payload
-      };
-      signedEvent.id = getEventHash(signedEvent);
-      signedEvent.sig = getSignature(signedEvent, privKeyHex);
+    let firstEvent = null;
+
+    // Create and sign events per recipient
+    for (const targetPub of recipients) {
+      try {
+        const ciphertext = nip44.encrypt(privKeyHex, targetPub, rawPayload);
+        const event = {
+          kind: 10001,
+          pubkey: pubKey,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [
+            ['t', 'sos'],
+            ['p', targetPub],
+            ...(settings.drillModeEnabled ? [['drill', 'true']] : [])
+          ],
+          content: ciphertext
+        };
+        event.id = getEventHash(event);
+        event.sig = getSignature(event, privKeyHex);
+
+        if (!firstEvent) firstEvent = event;
+        broadcastPromises.push(directRelayBroadcast(event));
+      } catch (e) {
+        console.error(`Encryption failed for recipient ${targetPub}:`, e);
+      }
     }
 
-    // Attempt delivery to Edge Function, fallback to Service Worker Sync Queue
-    if (!navigator.onLine && 'serviceWorker' in navigator && 'SyncManager' in window) {
-      await cacheEventForBackgroundSync(signedEvent || { rawPayload: payload });
-      showToast(`📵 Offline. Alert queued for Background Sync broadcast.`, 'warn', 5000);
-      closeModal('modal-sos-confirm');
-      return;
-    }
+    // Parallel: Backend passive receiver
+    broadcastPromises.push(API.post('/sos/trigger', {
+      lat: _sosLat,
+      lng: _sosMng,
+      is_drill: settings.drillModeEnabled
+    }).catch(e => console.error('Backend broadcast failed:', e)));
 
-    const result = await API.post('/sos/trigger', signedEvent || JSON.parse(payload));
+    const results = await Promise.all(broadcastPromises);
+    const relaySuccesses = results.filter(r => r === true).length;
 
     closeModal('modal-sos-confirm');
 
-    // Show SOS marker on map (only for the triggering user)
-    if (_sosLat && _sosMng) {
-      AppMap.addSOSMarker(_sosLat, _sosMng, settings.drillModeEnabled ? 'DRILL: Your SOS' : 'Your SOS');
+    if (relaySuccesses < 2 && !navigator.onLine) {
+      // GAP 4: Offline SMS Fallback Offer
+      const smsPayloads = compressEventForSMS(firstEvent); 
+      const payloadsJson = encodeURIComponent(JSON.stringify(smsPayloads));
+      showToast(`📵 Offline. <button onclick="triggerSMSFallback('${payloadsJson}')" style="color:var(--clr-accent);text-decoration:underline">Send via SMS instead?</button>`, 'warn', 15000);
+    } else {
+      showToast(`🚨 Alert broadcast to ${relaySuccesses} relays`, 'info', 5000);
     }
 
-    // Switch to alerts panel to show ack status
-    showToast(`🚨 ${settings.drillModeEnabled ? 'DRILL ' : ''}Alert sent to ${result.notifiedCount || 'network'} contact(s)`, 'info', 5000);
     goToPanel('alerts', document.getElementById('nav-alerts'));
     loadAlerts();
   } catch (err) {
@@ -113,6 +149,114 @@ async function fireSOS() {
     btn.disabled = false;
     btn.textContent = 'Send Alert';
   }
+}
+
+/**
+ * GAP 4: Nostr-to-SMS Compression & Fragmentation
+ * Format Single: ST1:<base64>
+ * Format Multi: ST1/[part]/[total]:<base64_fragment>
+ */
+function compressEventForSMS(event) {
+  if (!event) return [];
+  try {
+    // STRICT MODE: We need full ID and Sig for Gateway validation
+    const fullPayload = {
+      i: event.id,
+      p: event.pubkey,
+      s: event.sig,
+      c: event.content, 
+      a: event.created_at
+    };
+    const b64 = btoa(JSON.stringify(fullPayload));
+    
+    const MAX_CHUNK = 130; // Leave room for prefix and metadata
+    if (b64.length <= MAX_CHUNK) {
+      return [`ST1:${b64}`];
+    }
+
+    // Fragmentation logic
+    const chunks = [];
+    const total = Math.ceil(b64.length / MAX_CHUNK);
+    for (let i = 0; i < total; i++) {
+      const part = b64.slice(i * MAX_CHUNK, (i + 1) * MAX_CHUNK);
+      chunks.push(`ST1/${i + 1}/${total}:${part}`);
+    }
+    return chunks;
+  } catch (e) {
+    return [];
+  }
+}
+
+window.triggerSMSFallback = function(payloadsJson) {
+  const payloads = JSON.parse(decodeURIComponent(payloadsJson));
+  const gatewayNumber = AppState.settings.smsGatewayNumber || '+15074311828'; 
+  
+  // Send each fragment. Note: Most mobile browsers only allow one window.open at a time.
+  // In a real mobile app (Capacitor/Cordova), we would use a native SMS plugin to send in background.
+  // For web-client, we send the first one and warn the user.
+  if (payloads.length > 1) {
+    showToast(`⚠️ Multi-part alert. Please send all ${payloads.length} texts that follow.`, 'warn');
+  }
+
+  payloads.forEach((p, idx) => {
+    setTimeout(() => {
+      const intent = `sms:${gatewayNumber}?body=${encodeURIComponent(p)}`;
+      window.open(intent, '_blank');
+    }, idx * 1500); // Stagger opens to bypass popup blockers
+  });
+};
+
+/**
+ * GAP 1 & 3: Direct WebSocket Broadcast with Triage
+ */
+async function directRelayBroadcast(event) {
+  // Extract recipient npub from the event tags
+  const pTag = event.tags.find(t => t[0] === 'p');
+  const targetPubkey = pTag ? pTag[1] : null;
+  
+  // GAP 3 & 4: Triage order
+  const healthyRelays = window.NostrP2P ? NostrP2P.getBestRelays(3) : [];
+  const contactRelays = (AppState.contactRelays && targetPubkey) 
+    ? (AppState.contactRelays[targetPubkey] || []).map(r => r.url)
+    : [];
+
+  const allRelays = [
+    ...healthyRelays,         // Tier 1: Health-monitored (Optimal)
+    ...contactRelays,         // Tier 2: Contact-specific (NIP-65)
+    ...PRIMARY_RELAY_POOL,    // Tier 3: Hardcoded Primary
+    ...FALLBACK_RELAY_POOL    // Tier 4: Hardcoded Fallback
+  ];
+
+  // Unique relays only
+  const relayPool = [...new Set(allRelays)];
+  let successCount = 0;
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve(false), 8000); 
+    
+    relayPool.forEach(url => {
+      try {
+        const ws = new WebSocket(url);
+        ws.onopen = () => ws.send(JSON.stringify(['EVENT', event]));
+        ws.onmessage = (msg) => {
+          try {
+            const [type, id, ok] = JSON.parse(msg.data);
+            if (type === 'OK' && id === event.id && ok) {
+              successCount++;
+              if (successCount >= 2) {
+                clearTimeout(timeout);
+                resolve(true);
+              }
+            }
+          } catch(e) {}
+          ws.close();
+        };
+        ws.onerror = () => ws.close();
+      } catch(e) {
+        console.error(`WebSocket setup failed for ${url}:`, e);
+      }
+    });
+  });
 }
 
 /**

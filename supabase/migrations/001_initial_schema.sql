@@ -11,7 +11,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 --  USERS
 -- ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS users (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   username        TEXT UNIQUE NOT NULL,
   display_name    TEXT,
   phone           TEXT UNIQUE,
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
 --  DEVICE PINS  (Path A — 4-digit, device-bound)
 -- ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS device_pins (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   device_fp       TEXT NOT NULL,          -- device fingerprint (browser/app generated)
   pin_hash        TEXT NOT NULL,          -- bcrypt hash of 4-digit PIN
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS device_pins (
 --  PENDING OTPs  (Path B — 6-digit real OTP)
 -- ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS pending_otps (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   otp_hash        TEXT NOT NULL,          -- bcrypt hash of 6-digit OTP
   purpose         TEXT NOT NULL DEFAULT 'login', -- login | device_add | account_recovery
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS pending_otps (
 --  NOSTR CREDENTIALS  (Path C — local key custody)
 -- ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS nostr_credentials (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   npub            TEXT NOT NULL UNIQUE,   -- bech32 public key, plaintext
   auth_method     TEXT NOT NULL DEFAULT 'local', -- local | nip46
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS nostr_credentials (
 --  NOSTR CHALLENGES  (server-issued nonces for C1 & C2)
 -- ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS nostr_challenges (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   nonce           TEXT NOT NULL UNIQUE,   -- random single-use challenge string
   npub            TEXT NOT NULL,
   expires_at      TIMESTAMPTZ NOT NULL,
@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
 --  CONTACT LINKS  (mutual opt-in)
 -- ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS contact_links (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id_a       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   user_id_b       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   initiated_by    UUID NOT NULL,
@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS contact_links (
 --  CONTACT GROUPS
 -- ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS contact_groups (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   owner_user_id   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name            TEXT NOT NULL,
   created_at      TIMESTAMPTZ DEFAULT NOW()
@@ -142,7 +142,7 @@ CREATE TABLE IF NOT EXISTS current_location (
 --  LOCATION HISTORY  (audit trail, subject to retention)
 -- ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS location_history (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   lat             DOUBLE PRECISION NOT NULL,
   lng             DOUBLE PRECISION NOT NULL,
@@ -162,7 +162,7 @@ CREATE INDEX IF NOT EXISTS idx_location_history_user ON location_history(user_id
 --  TRACKER TAGS  (BLE beacon management)
 -- ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS tracker_tags (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   label           TEXT NOT NULL,
   ble_uuid        TEXT NOT NULL,
@@ -178,7 +178,7 @@ CREATE TABLE IF NOT EXISTS tracker_tags (
 --  SOS EVENTS
 -- ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS sos_events (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   triggered_by    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   lat             DOUBLE PRECISION,
   lng             DOUBLE PRECISION,
@@ -189,7 +189,7 @@ CREATE TABLE IF NOT EXISTS sos_events (
 );
 
 CREATE TABLE IF NOT EXISTS sos_notifications (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   sos_event_id    UUID NOT NULL REFERENCES sos_events(id) ON DELETE CASCADE,
   notified_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   status          TEXT NOT NULL DEFAULT 'SENT',   -- SENT | DELIVERED | SEEN | ON_MY_WAY
@@ -202,7 +202,7 @@ CREATE TABLE IF NOT EXISTS sos_notifications (
 --  REMOTE PINGS
 -- ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS remote_pings (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   from_user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   target_user_id  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   status          TEXT NOT NULL DEFAULT 'PENDING',  -- PENDING | DELIVERED | EXPIRED
@@ -214,7 +214,7 @@ CREATE TABLE IF NOT EXISTS remote_pings (
 --  CALENDAR EVENTS  (decoy functional calendar)
 -- ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS calendar_events (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title           TEXT NOT NULL,
   description     TEXT,
