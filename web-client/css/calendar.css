@@ -107,7 +107,8 @@
 
 /* ── Calendar Screen shell ─────────────────────────────── */
 #calendar-screen {
-  background: var(--cal-bg);
+  background: #ffffff url('/assets/decoy/decoy_splash.png') no-repeat center center;
+  background-size: cover;
   display: flex;
   flex-direction: column;
   height: 100%;

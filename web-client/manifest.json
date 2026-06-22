@@ -27,5 +27,18 @@
     "productivity",
     "utilities"
   ],
-  "screenshots": []
+  "screenshots": [
+    {
+      "src": "/assets/decoy/decoy_splash.png",
+      "sizes": "1920x1080",
+      "type": "image/png",
+      "form_factor": "wide"
+    },
+    {
+      "src": "/assets/decoy/decoy_banner.png",
+      "sizes": "1920x1080",
+      "type": "image/png",
+      "form_factor": "wide"
+    }
+  ]
 }
