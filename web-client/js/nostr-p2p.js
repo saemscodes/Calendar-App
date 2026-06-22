@@ -68,17 +68,22 @@ const NostrP2P = {
     allRelays.forEach(url => {
       const start = Date.now();
       const ws = new WebSocket(url);
+      
       const timeout = setTimeout(() => {
-        ws.close();
+        // We only mark it offline here. We do not call ws.close() 
+        // to avoid the native "closed before established" console error.
         this.updateRelayStatus(url, 'offline', 9999);
       }, 5000);
 
       ws.onopen = () => {
         const latency = Date.now() - start;
-        clearTimeout(timeout);
         ws.close();
-        this.updateRelayStatus(url, 'online', latency);
+        if (latency <= 5000) {
+          clearTimeout(timeout);
+          this.updateRelayStatus(url, 'online', latency);
+        }
       };
+      
       ws.onerror = () => {
         clearTimeout(timeout);
         this.updateRelayStatus(url, 'offline', 9999);

@@ -18,30 +18,37 @@ require('express-async-errors');
 require('dotenv').config();
 
 const express = require('express');
-const cors    = require('cors');
-const helmet  = require('helmet');
-const morgan  = require('morgan');
+const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
 
-const { prisma }          = require('./config/db');
-const authRouter          = require('./routes/auth');
-const usersRouter         = require('./routes/users');
-const contactsRouter      = require('./routes/contacts');
-const locationRouter      = require('./routes/location');
-const sosRouter           = require('./routes/sos');
-const trackersRouter      = require('./routes/trackers');
-const pingsRouter         = require('./routes/pings');
-const settingsRouter      = require('./routes/settings');
-const smsWebhookRouter    = require('./routes/smsWebhook');
-const { startCronJobs }   = require('./jobs');
-const { errorHandler }    = require('./middleware/errorHandler');
-const { supabaseAdmin }   = require('./config/supabase');
+const { prisma } = require('./config/db');
+const authRouter = require('./routes/auth');
+const usersRouter = require('./routes/users');
+const contactsRouter = require('./routes/contacts');
+const locationRouter = require('./routes/location');
+const sosRouter = require('./routes/sos');
+const trackersRouter = require('./routes/trackers');
+const pingsRouter = require('./routes/pings');
+const settingsRouter = require('./routes/settings');
+const smsWebhookRouter = require('./routes/smsWebhook');
+const { startCronJobs } = require('./jobs');
+const { errorHandler } = require('./middleware/errorHandler');
+const { supabaseAdmin } = require('./config/supabase');
 
 const app = express();
 
 // ─── Middleware ────────────────────────────────────────────────────────────
 app.use(helmet({ contentSecurityPolicy: false }));
+const allowedOrigins = (process.env.CORS_ORIGIN || 'https://swiftcal.top').split(',');
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'https://calendar-safetrack.vercel.app',
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
 }));
 app.use(express.json({ limit: '1mb' }));
@@ -53,13 +60,13 @@ app.set('supabase', supabaseAdmin);
 
 // ─── API Routes ────────────────────────────────────────────────────────────
 const api = express.Router();
-api.use('/auth',     authRouter);
-api.use('/users',    usersRouter);
+api.use('/auth', authRouter);
+api.use('/users', usersRouter);
 api.use('/contacts', contactsRouter);
 api.use('/location', locationRouter);
-api.use('/sos',      sosRouter);
+api.use('/sos', sosRouter);
 api.use('/trackers', trackersRouter);
-api.use('/pings',    pingsRouter);
+api.use('/pings', pingsRouter);
 api.use('/settings', settingsRouter);
 app.use('/api/v1', api);
 
