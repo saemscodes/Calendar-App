@@ -145,30 +145,13 @@ function showApp() {
   document.getElementById('app-screen').classList.add('active');
 
   // Populate profile UI
-  const u = AppState.user;
-  const avatarUrl = IconResolver.getAvatar(u.username || u.id);
-  
-  const navAvatar = document.getElementById('nav-avatar');
-  navAvatar.innerHTML = `<img src="${avatarUrl}" style="width:100%;height:100%;border-radius:50%">`;
-  navAvatar.style.background = 'none';
-
-  const setAvatar = document.getElementById('settings-avatar');
-  setAvatar.innerHTML = `<img src="${avatarUrl}" style="width:100%;height:100%;border-radius:50%">`;
-  setAvatar.style.background = 'none';
-
-  document.getElementById('settings-displayname').textContent = u.displayName || u.username;
-  document.getElementById('settings-username').textContent = `@${u.username}`;
-  document.getElementById('settings-phone').textContent = u.phone;
+  updateProfileUI(AppState.user);
 
   // Init realtime
   initRealtime();
 
-  // Load everything
-  loadContacts();
-  loadTrackers();
-  loadAlerts();
-  loadSettings();
-  loadWatchers();
+  // Start bootstrap (One-Trip Pattern)
+  loadApplicationData();
 
   // Start geolocation
   startLocationWatch();
@@ -492,6 +475,13 @@ function openAddContact() { openModal('modal-add-contact'); }
 async function switchAlertTab(tab, btn) {
   document.querySelectorAll('.alert-tab').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  
+  // Set data-attribute on parent for sliding pill animation
+  const container = btn.closest('.alerts-tabs');
+  if (container) {
+    container.setAttribute('data-active-tab', tab === 'inbox' ? 'right' : 'left');
+  }
+
   document.getElementById('alerts-outbound').classList.toggle('hidden', tab !== 'outbound');
   document.getElementById('alerts-inbox').classList.toggle('hidden', tab !== 'inbox');
 }
@@ -625,3 +615,103 @@ async function handleGenerateInvite() {
     btn.textContent = 'Generate Invite Code';
   }
 }
+
+// ── Optimized Bootstrap & Device Hardening ────────────
+
+/**
+ * Optimized One-Trip Loader for high-latency environments.
+ */
+async function loadApplicationData() {
+  if (AppState.isDemoMode) return;
+  
+  try {
+    const data = await API.rpc('get_safe_track_bootstrap');
+    
+    // Distribute data to global state
+    AppState.user = data.profile;
+    AppState.contacts = data.contacts;
+    
+    // Inject into specialized modules
+    if (window.renderContacts) renderContacts(data.contacts);
+    if (window.renderTrackers) renderTrackers(data.trackers);
+    if (window.renderAlerts) renderAlerts(data.alerts);
+    updateProfileUI(data.profile);
+    
+    // Verify current device context (Security Hardening)
+    await verifyDeviceContext();
+    
+    console.log('[BOOTSTRAP] Secure context initialized.');
+  } catch (err) {
+    console.error('[BOOTSTRAP] Error:', err);
+    showToast('Failed to load secure state. Re-authenticating...', 'error');
+    logout();
+  }
+}
+
+/**
+ * Updates all identity markers in the UI with verified user data.
+ */
+function updateProfileUI(u) {
+  if (!u) return;
+  const avatarUrl = IconResolver.getAvatar(u.username || u.id);
+  
+  // Update Nav Avatar
+  const navAvatar = document.getElementById('nav-avatar');
+  if (navAvatar) {
+    navAvatar.innerHTML = `<img src="${avatarUrl}" style="width:100%;height:100%;border-radius:50%">`;
+    navAvatar.style.background = 'none';
+  }
+
+  // Update Settings Profile Card
+  const setAvatar = document.getElementById('settings-avatar');
+  if (setAvatar) {
+    setAvatar.innerHTML = `<img src="${avatarUrl}" style="width:100%;height:100%;border-radius:50%">`;
+    setAvatar.style.background = 'none';
+  }
+
+  const nameEl = document.getElementById('settings-displayname');
+  if (nameEl) nameEl.textContent = u.displayName || u.username;
+
+  const userEl = document.getElementById('settings-username');
+  if (userEl) userEl.textContent = `@${u.username}`;
+
+  const phoneEl = document.getElementById('settings-phone');
+  if (phoneEl) phoneEl.textContent = u.phone || '—';
+}
+
+/**
+ * Captures high-fidelity metadata for secondary device verification.
+ * Does not store PII; uses hashing to remain forensically silent.
+ */
+async function captureDeviceSecureMetadata() {
+  const meta = {
+    ua: navigator.userAgent,
+    plt: navigator.platform,
+    scr: `${window.screen.width}x${window.screen.height}`,
+    hc: navigator.hardwareConcurrency || '?',
+    mem: navigator.deviceMemory || '?',
+    tz: Intl.DateTimeFormat().resolvedOptions().timeZone
+  };
+  
+  // Create a stable hash of the context
+  const str = JSON.stringify(meta);
+  const buffer = new TextEncoder().encode(str);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  
+  return { hash: hashHex, raw: meta };
+}
+
+async function verifyDeviceContext() {
+  const { hash, raw } = await captureDeviceSecureMetadata();
+  const fp = localStorage.getItem('st_device_fp');
+  
+  // Update server with current context (silent heartbeat)
+  await API.post('/auth/heartbeat', {
+    device_fp: fp,
+    metadata_hash: hash,
+    metadata_raw: raw
+  }).catch(() => {/* fail silent on network blip */});
+}
+

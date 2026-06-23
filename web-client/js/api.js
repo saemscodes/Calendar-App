@@ -68,6 +68,7 @@ const API = (() => {
     post: (path, body, opts) => request(path, { method: 'POST', body: JSON.stringify(body), ...opts }),
     put: (path, body, opts) => request(path, { method: 'PUT', body: JSON.stringify(body), ...opts }),
     del: (path, opts) => request(path, { method: 'DELETE', ...opts }),
+    rpc: (name, body, opts) => request(`/rpc/${name}`, { method: 'POST', body: JSON.stringify(body), ...opts }),
 
     // Auth helpers
     saveTokens,

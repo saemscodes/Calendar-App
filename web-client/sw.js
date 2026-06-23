@@ -2,17 +2,20 @@ const CACHE_NAME = 'safetrack-v2-cache';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
+  '/manifest.json',
   '/css/main.css',
   '/css/calendar.css',
   '/js/app.js',
+  '/js/api.js',
+  '/js/auth-router.js',
+  '/js/realtime.js',
+  '/js/glass-tour.js',
   '/js/sos.js',
   '/js/icons.js',
   '/js/dock.js',
-  '/js/auth-router.js',
   '/js/map.js',
   '/js/bip39.js',
   '/js/calendar.js',
-  '/js/api.js',
   '/js/contacts.js',
   '/js/trackers.js',
   '/js/settings.js',
@@ -22,17 +25,36 @@ const ASSETS_TO_CACHE = [
 
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS_TO_CACHE))
+    caches.open(CACHE_NAME).then(cache => {
+      console.log('[SW] Pre-caching critical assets');
+      return cache.addAll(ASSETS_TO_CACHE);
+    }).catch(err => console.error('[SW] Cache addAll failed:', err))
   );
 });
 
 self.addEventListener('activate', event => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches.keys().then(keys => {
+      return Promise.all(keys.map(key => {
+        if (key !== CACHE_NAME) return caches.delete(key);
+      }));
+    }).then(() => self.clients.claim())
+  );
 });
 
 self.addEventListener('fetch', event => {
+  // Graceful fallback for network failures
   event.respondWith(
-    caches.match(event.request).then(response => response || fetch(event.request))
+    caches.match(event.request).then(cached => {
+      return cached || fetch(event.request).catch(err => {
+        console.warn('[SW] Fetch failed for:', event.request.url);
+        // Return a generic offline response if it's a page navigation
+        if (event.request.mode === 'navigate') {
+          return caches.match('/index.html');
+        }
+        return new Response('Offline', { status: 503, statusText: 'Offline' });
+      });
+    })
   );
 });
 

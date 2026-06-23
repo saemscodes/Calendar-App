@@ -150,8 +150,8 @@
 }
 
 .cal-nav-btn {
-  width: 36px;
-  height: 36px;
+  width: 28px;
+  height: 28px;
   border: none;
   background: none;
   border-radius: 50%;
@@ -174,7 +174,7 @@
 
 .cal-today-btn {
   height: 32px;
-  padding: 0 12px;
+  padding: 0 2px;
   border: none;
   background: none;
   color: var(--cal-blue);

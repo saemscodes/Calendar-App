@@ -1093,27 +1093,57 @@ body::before {
    ALERTS PANEL
    ══════════════════════════════════════════════════════ */
 .alerts-tabs {
+  position: relative;
   display: flex;
-  gap: 4px;
+  gap: 0;
   margin: 0 20px 16px;
-  background: rgba(255,255,255,0.05);
+  background: rgba(255, 255, 255, 0.05);
   border-radius: var(--radius-full);
-  padding: 4px;
+  padding: 3px;
+  height: 38px;
+  overflow: hidden;
 }
+
+/* The Sliding Pill */
+.alerts-tabs::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  background: var(--bg-card-hover);
+  border-radius: var(--radius-full);
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 1;
+}
+
+.alerts-tabs[data-active-tab="right"]::before {
+  transform: translateX(100%);
+}
+
 .alert-tab {
   flex: 1;
-  padding: 9px;
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   border: none;
-  border-radius: var(--radius-full);
   background: transparent;
   color: var(--text-secondary);
   font-family: inherit;
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: var(--transition);
+  transition: color 0.3s ease;
+  user-select: none;
 }
-.alert-tab.active { background: var(--bg-card-hover); color: var(--text-primary); }
+
+.alert-tab.active {
+  color: var(--text-primary);
+}
 
 .alerts-list {
   padding: 0 20px;

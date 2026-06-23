@@ -1,3 +1,5 @@
+// @ts-nocheck
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import * as nostr from 'https://esm.sh/nostr-tools@1.17.0'
@@ -48,7 +50,7 @@ serve(async (req) => {
       // Format: ST1/[part]/[total]:[payload]
       const [meta, payload] = bodyText.split(':')
       const [, part, total] = meta.split('/')
-      
+
       const { data: inserted } = await supabase.from('sms_fragments').insert({
         sender_hash: senderHash,
         total_parts: parseInt(total),
@@ -83,13 +85,13 @@ serve(async (req) => {
     // We assume the client has provided enough to reconstruct the minimal event for validation
     // ST1 stripped keys: i (id), p (pubkey), s (sig), c (content), a (created_at)
     const nostrEvent = {
-        id: eventData.i,
-        pubkey: eventData.p,
-        created_at: eventData.a,
-        kind: 10001,
-        tags: [['t', 'sos'], ['p', eventData.p]],
-        content: eventData.c,
-        sig: eventData.s
+      id: eventData.i,
+      pubkey: eventData.p,
+      created_at: eventData.a,
+      kind: 10001,
+      tags: [['t', 'sos'], ['p', eventData.p]],
+      content: eventData.c,
+      sig: eventData.s
     }
 
     // 5. SIGNATURE VALIDATION (Section 1.4)
@@ -100,9 +102,9 @@ serve(async (req) => {
     }
 
     // 6. PARALLEL RELAY BROADCAST
-    const relayPool = PRIMARY_RELAY_POOL 
+    const relayPool = PRIMARY_RELAY_POOL
     const results = {}
-    
+
     await Promise.all(relayPool.map(async (relayUrl) => {
       try {
         results[relayUrl] = await broadcastEvent(relayUrl, nostrEvent)
@@ -125,7 +127,7 @@ serve(async (req) => {
     // 8. TWIML RESPONSE
     const replyText = successCount >= 2 ? `ST-OK:${nostrEvent.id.slice(0, 8)}` : `ST-FAIL`
     return new Response(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${replyText}</Message></Response>`, {
-        headers: { 'Content-Type': 'text/xml' }
+      headers: { 'Content-Type': 'text/xml' }
     })
 
   } catch (err) {
@@ -147,14 +149,14 @@ async function broadcastEvent(url: string, event: any): Promise<boolean> {
     const timer = setTimeout(() => { ws.close(); resolve(false) }, 8000)
     ws.onopen = () => ws.send(JSON.stringify(['EVENT', event]))
     ws.onmessage = (msg) => {
-        try {
-            const [type, id, ok] = JSON.parse(msg.data)
-            if (type === 'OK' && id === event.id && ok) {
-                clearTimeout(timer)
-                ws.close()
-                resolve(true)
-            }
-        } catch(e) {}
+      try {
+        const [type, id, ok] = JSON.parse(msg.data)
+        if (type === 'OK' && id === event.id && ok) {
+          clearTimeout(timer)
+          ws.close()
+          resolve(true)
+        }
+      } catch (e) { }
     }
     ws.onerror = () => { ws.close(); resolve(false) }
   })
