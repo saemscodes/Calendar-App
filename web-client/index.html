@@ -251,6 +251,38 @@
   </div>
 
   <!-- ════════════════════════════════════════════════════ -->
+  <!--  VOUCH SETUP MODAL                                  -->
+  <!-- ════════════════════════════════════════════════════ -->
+  <div id="modal-vouch-setup" class="cal-modal-overlay hidden" role="dialog" aria-modal="true"
+    aria-labelledby="vouch-setup-title">
+    <div class="cal-modal">
+      <div class="cal-modal-header">
+        <div class="cal-nip46-icon">🚀</div>
+        <h2 id="vouch-setup-title">Complete Setup</h2>
+        <p class="cal-modal-desc">Code verified. Please set up your local encryption and identity.</p>
+      </div>
+      <div class="cal-form-group">
+        <label for="vouch-username">Username</label>
+        <input type="text" id="vouch-username" placeholder="e.g. john_doe" autocomplete="off" aria-label="Username" />
+      </div>
+      <div class="cal-form-group">
+        <label for="vouch-display-name">Display name</label>
+        <input type="text" id="vouch-display-name" placeholder="Your name" autocomplete="name"
+          aria-label="Display name" />
+      </div>
+      <div class="cal-form-group">
+        <label for="vouch-pin">New 4-Digit Local PIN</label>
+        <input type="password" id="vouch-pin" placeholder="••••" maxlength="4" pattern="[0-9]{4}" inputmode="numeric" aria-label="Local PIN" />
+      </div>
+      <div id="vouch-setup-error" class="cal-form-error" aria-live="polite"></div>
+      <div class="cal-modal-actions">
+        <button class="cal-btn-primary" onclick="submitVouchSetup()" id="btn-vouch-setup">Initialize</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ════════════════════════════════════════════════════ -->
   <!--  NIP-46 PENDING MODAL (external signer)            -->
   <!-- ════════════════════════════════════════════════════ -->
   <div id="modal-nip46" class="cal-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="nip46-title">
@@ -916,6 +948,13 @@
             localStorage.setItem('st_user', JSON.stringify(result.user));
             window.AppState && (window.AppState.user = result.user);
           }
+
+          // **THE INTERCEPT** - Halt transition if identity is incomplete
+          if (result.path === 'otp' && (!result.user || !result.user.npub)) {
+            document.getElementById('modal-vouch-setup').classList.remove('hidden');
+            return; // Halt transition
+          }
+
           transitionToSafeTrack();
 
           // First-Time User Guide Trigger (Section 3) - Only executes after successful auth
@@ -1227,7 +1266,99 @@
       }
     }
 
-    // NIP-46 External Signer ─────────────────────────────────
+    // ── Vouch Setup (Phase C Data Commit) ───────────────────
+    async function submitVouchSetup() {
+      const u = document.getElementById('vouch-username').value.trim();
+      const dn = document.getElementById('vouch-display-name').value.trim();
+      const pin = document.getElementById('vouch-pin').value.trim();
+      const errEl = document.getElementById('vouch-setup-error');
+      const btn = document.getElementById('btn-vouch-setup');
+
+      errEl.textContent = '';
+      if (!u || !dn || !pin) { errEl.textContent = 'All fields are required.'; return; }
+      if (!/^\d{4}$/.test(pin)) { errEl.textContent = 'PIN must be exactly 4 digits.'; return; }
+
+      btn.disabled = true;
+      btn.textContent = 'Generating Secure Identity...';
+
+      try {
+        if (typeof BIP39 === 'undefined') throw new Error('Crypto module offline');
+        
+        // 1. Generate Seed Phrase
+        const words = await BIP39.generateMnemonic(12, 'en');
+        const fingerprint = await BIP39.entropyFingerprint(words, 'en');
+        
+        // 2. Derive npub
+        const derived = await BIP39.deriveNsecFromMnemonic(words, 'en');
+        if (!derived) throw new Error('Key derivation failed');
+        const npub = derived.npubBech32;
+
+        const phrase_joined = words.join(' ');
+        const device_fp = AuthRouter.getDeviceFP();
+        const SUPABASE_URL = window.SUPABASE_URL || '';
+        
+        // 3. Commit to server via secure auth-seed-store
+        const token = localStorage.getItem('st_access_token');
+        const resp = await fetch(`${SUPABASE_URL}/functions/v1/auth-seed-store`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+             phrase_joined,
+             language: 'en',
+             word_count: 12,
+             entropy_fingerprint: fingerprint,
+             username: u,
+             display_name: dn,
+             npub,
+             pin,
+             device_fp
+          })
+        });
+
+        if (!resp.ok) throw new Error('Failed to save secure profile');
+        
+        // Success
+        document.getElementById('modal-vouch-setup').classList.add('hidden');
+        
+        // Save seed locally temporarily to show user
+        _currentSeedWords = words;
+        _currentSeedLang = 'en';
+
+        // Re-inject updated user data to state (to avoid requiring a full reload)
+        const cachedUser = JSON.parse(localStorage.getItem('st_user') || '{}');
+        cachedUser.npub = npub;
+        cachedUser.username = u;
+        cachedUser.display_name = dn;
+        localStorage.setItem('st_user', JSON.stringify(cachedUser));
+        if (window.AppState) window.AppState.user = cachedUser;
+
+        // Complete the aborted transition!
+        transitionToSafeTrack();
+
+        // Enforce Location Sharing OFF for first-time users
+        localStorage.setItem('st_location_sharing_prompted', 'false');
+        localStorage.setItem('st_location_sharing', 'false');
+        if (window.AppState) AppState.locationSharingEnabled = false;
+
+        // Force them to record their seed
+        setTimeout(() => {
+           showToast('Privacy Notice: Location sharing is DISABLED by default.', 'info', 5000);
+           document.getElementById('seed-setup-error').textContent = '';
+           document.getElementById('seed-written-confirm').checked = false;
+           document.getElementById('modal-seed-setup').classList.remove('hidden');
+           renderSeedWordGrid(_currentSeedWords);
+        }, 1200);
+
+      } catch (e) {
+         errEl.textContent = 'Setup failed: ' + e.message;
+      } finally {
+         btn.disabled = false;
+         btn.textContent = 'Initialize';
+      }
+    }
     function showNIP46Modal(nonce) {
       document.getElementById('nip46-countdown').textContent = '120';
       document.getElementById('modal-nip46').classList.remove('hidden');

@@ -4,9 +4,14 @@
 // The raw phrase_joined is bcrypt-hashed here and then discarded.
 // The hash is stored in seed_phrase_recovery — no raw phrase persists.
 
+// @ts-ignore
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
+// @ts-ignore
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// @ts-ignore
 import * as bcrypt from 'https://deno.land/x/bcrypt@v0.4.1/mod.ts';
+
+declare const Deno: any;
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -45,7 +50,7 @@ async function verifyJWT(token: string): Promise<string | null> {
 
 const SUPPORTED_LANGUAGES = ['en', 'am', 'ti', 'fr', 'es', 'zh-cn'];
 
-serve(async (req) => {
+serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
@@ -61,6 +66,11 @@ serve(async (req) => {
     language?: string;
     word_count?: number;
     entropy_fingerprint?: string;
+    username?: string;
+    display_name?: string;
+    npub?: string;
+    pin?: string;
+    device_fp?: string;
   };
   try {
     body = await req.json();
@@ -68,43 +78,55 @@ serve(async (req) => {
     return json({ error: 'Invalid JSON' }, 400);
   }
 
-  const { phrase_joined, language = 'en', word_count, entropy_fingerprint } = body;
+  const { phrase_joined, language = 'en', word_count, entropy_fingerprint, username, display_name, npub, pin, device_fp } = body;
 
-  if (!phrase_joined) return json({ error: 'phrase_joined required' }, 400);
+  if (phrase_joined) {
+    const words = phrase_joined.trim().split(/\s+/).filter(Boolean);
+    if (words.length !== 12 && words.length !== 24) {
+      return json({ error: 'Phrase must be 12 or 24 words' }, 400);
+    }
+    if (!SUPPORTED_LANGUAGES.includes(language)) {
+      return json({ error: 'Unsupported language' }, 400);
+    }
 
-  const words = phrase_joined.trim().split(/\s+/).filter(Boolean);
-  if (words.length !== 12 && words.length !== 24) {
-    return json({ error: 'Phrase must be 12 or 24 words' }, 400);
+    const phraseHash = bcrypt.hashSync(phrase_joined.toLowerCase().trim(), 12);
+
+    const { error: seedErr } = await supabase
+      .from('seed_phrase_recovery')
+      .upsert(
+        {
+          user_id: userId,
+          phrase_hash: phraseHash,
+          language,
+          word_count: word_count ?? words.length,
+          entropy_fingerprint: entropy_fingerprint ?? null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id' }
+      );
+    if (seedErr) console.error('[auth-seed-store] DB error:', seedErr);
   }
 
-  if (!SUPPORTED_LANGUAGES.includes(language)) {
-    return json({ error: 'Unsupported language' }, 400);
+  // Update user profile if provided (Phase C: Data Commit)
+  if (npub || username || display_name) {
+    const updates: any = {};
+    if (npub) updates.npub = npub;
+    if (username) updates.username = username;
+    if (display_name) updates.display_name = display_name;
+    
+    await supabase.from('users').update(updates).eq('id', userId);
   }
 
-  // ── Bcrypt-hash the phrase server-side ───────────────────
-  // Cost factor 12 — appropriate for recovery phrase (used infrequently)
-  const phraseHash = bcrypt.hashSync(phrase_joined.toLowerCase().trim(), 12);
-
-  // ── Upsert into seed_phrase_recovery ─────────────────────
-  const { error } = await supabase
-    .from('seed_phrase_recovery')
-    .upsert(
-      {
-        user_id: userId,
-        phrase_hash: phraseHash,
-        language,
-        word_count: word_count ?? words.length,
-        entropy_fingerprint: entropy_fingerprint ?? null,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'user_id' }
-    );
-
-  if (error) {
-    console.error('[auth-seed-store] DB error:', error.message);
-    return json({ error: 'Failed to store seed phrase' }, 500);
+  // Register Device PIN binding if provided
+  if (pin && device_fp) {
+    const pinHash = bcrypt.hashSync(pin, 10);
+    await supabase.from('device_pins').upsert({
+      user_id: userId,
+      device_fp: device_fp,
+      pin_hash: pinHash,
+      attempt_count: 0
+    }, { onConflict: 'user_id, device_fp' });
   }
 
-  // phrase_joined is now out of scope — GC will collect it
-  return json({ ok: true, language, word_count: words.length });
+  return json({ ok: true });
 });
